@@ -84,24 +84,27 @@ def train_epoch(model, data_loader, optimizer, device):
     total_loss = 0
     total_tokens = 0
     
-    for batch in tqdm.tqdm(data_loader, desc = 'Training'):
+    for step,batch in tqdm.tqdm(data_loader, desc = 'Training'):
         batch = {k : v.to(device) for k, v in batch.items()}
-        outputs = model(**batch)
+        outputs = model(input_ids=batch["input_ids"],
+            attention_mask=batch["attention_mask"],
+            labels=batch["labels"])
         loss = outputs.loss
 
-        total_loss += loss.item()
+        batch_tokens = batch["input_ids"].numel()
+        total_loss += loss.item() * batch_tokens
+        total_tokens += batch_tokens
 
         
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
 
-        print("training loss : ",loss.item())
-        batch_tokens = batch['input_ids'].numel()
-        total_loss += batch_tokens * loss.item()
-        total_tokens += batch_tokens
+        if(step%100==0):
+            print(f"step :{step} training loss : {loss.item()}")
 
-        del outputs
+        del batch, outputs
+        torch.cuda.empty_cache()  # Optionally clear GPU memory
 
 @torch.no_grad()
 def evaluate(model, data_loader, device):
@@ -109,15 +112,17 @@ def evaluate(model, data_loader, device):
     total_loss = 0
     total_tokens = 0
     
-    for batch in tqdm.tqdm(data_loader, desc = 'Evaluating'):
+    for step,batch in tqdm.tqdm(data_loader, desc = 'Evaluation'):
         batch = {k : v.to(device) for k, v in batch.items()}
         with torch.no_grad():
-            outputs = model(**batch, output_attentions=True)
+            outputs = model(input_ids=batch["input_ids"],
+                attention_mask=batch["attention_mask"],
+                labels=batch["labels"])
             loss = outputs.loss
 
-        batch_tokens = batch['input_ids'].numel()
-        print("eval loss : ",loss.item())
-        total_loss += batch_tokens * loss.item()
+        batch_tokens = batch["input_ids"].numel()
+        total_loss += loss.item() * batch_tokens
         total_tokens += batch_tokens
-        del outputs
+        del batch, outputs
+        torch.cuda.empty_cache()  # Optionally clear GPU memory
 

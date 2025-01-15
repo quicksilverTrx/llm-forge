@@ -5,6 +5,7 @@ import logging
 import math
 from .base_attention import ScaledDotProductAttention
 
+logger = logging.getLogger(__name__)
 class MultiHeadAttention(nn.Module):
     """
     Optimized multi-head attention implementation with parallel computation.
@@ -31,7 +32,7 @@ class MultiHeadAttention(nn.Module):
         self.head_dim = d_model // num_heads
         self.scaling = float(self.head_dim) ** -0.5
 
-        self.qkv_prog = nn.Linear(d_model, d_model*3, bias=bias)
+        self.qkv_proj = nn.Linear(d_model, d_model*3, bias=bias)
         self.output_proj = nn.Linear(d_model, d_model, bias=bias)
         self.attention = ScaledDotProductAttention(dropout=dropout, scale_factor=self.scaling)
 
@@ -82,7 +83,8 @@ class MultiHeadAttention(nn.Module):
             Tuple of (output tensor, optional attention weights)
         """
         try:
-            batch_size, seq_len, _ = hidden_states.size()
+            print( hidden_states.shape)
+            batch_size, seq_len, _ = hidden_states.shape
 
             qkv = self.qkv_proj(hidden_states)
             # Split Q, K, V and heads in parallel

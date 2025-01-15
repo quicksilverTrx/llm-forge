@@ -66,7 +66,7 @@ def prepare_wikitext2 (tokenizer,batch_size=16, seq_length=512):
     dataset = load_dataset('wikitext','wikitext-2-v1')
 
     def tokenizer_fn(text):
-        return tokenizer(text['text'], truncation=True, max_length=seq_length, padding='max_length')    
+        return tokenizer(text['text'], truncation=True, max_length=seq_length, padding='max_length',return_tensors="pt")    
     
 
     dataset = dataset.map(function=tokenizer_fn, batched=True, remove_columns=['text'])
@@ -84,7 +84,7 @@ def train_epoch(model, data_loader, optimizer, device):
     total_loss = 0
     total_tokens = 0
     
-    for step,batch in tqdm.tqdm(data_loader, desc = 'Training'):
+    for step, batch in enumerate(data_loader):
         batch = {k : v.to(device) for k, v in batch.items()}
         outputs = model(input_ids=batch["input_ids"],
             attention_mask=batch["attention_mask"],
@@ -112,7 +112,7 @@ def evaluate(model, data_loader, device):
     total_loss = 0
     total_tokens = 0
     
-    for step,batch in tqdm.tqdm(data_loader, desc = 'Evaluation'):
+    for step,batch in enumerate(data_loader):
         batch = {k : v.to(device) for k, v in batch.items()}
         with torch.no_grad():
             outputs = model(input_ids=batch["input_ids"],

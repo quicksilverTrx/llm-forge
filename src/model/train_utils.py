@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn 
 from torch.optim import AdamW
+from torch.cuda.amp import GradScaler, autocast
+import gc
 from torch.utils.data import DataLoader, Dataset
 from datasets import load_dataset
 from transformers import GPT2Tokenizer, GPT2Model, DataCollatorForLanguageModeling
@@ -12,6 +14,13 @@ from typing import Optional, Dict
 
 logger = logging.getLogger(__name__)
 
+
+def report_gpu_usage(stage,step=0):
+    allocated = torch.cuda.memory_allocated() / 1024**2  # Convert to MB
+    reserved = torch.cuda.memory_reserved() / 1024**2  # Convert to MB
+    if step%100 ==0:
+      print(f"[{stage}] GPU Memory Allocated: {allocated:.2f} MB")
+      print(f"[{stage}] GPU Memory Reserved: {reserved:.2f} MB\n")
 class LanguageModelingWrapper(nn.Module):
     """Wrapper that adds language modeling loss calculation to GPT2Model"""
     def __init__(self, base_model):
@@ -66,7 +75,7 @@ def prepare_wikitext2 (tokenizer,batch_size=16, seq_length=512):
     dataset = load_dataset('wikitext','wikitext-2-v1')
 
     def tokenizer_fn(text):
-        return tokenizer(text['text'], truncation=True, max_length=seq_length, padding='max_length')    
+        return tokenizer(text['text'], truncation=True, max_length=seq_length, padding='max_length',return_tensors="pt")    
     
 
     dataset = dataset.map(function=tokenizer_fn, batched=True, remove_columns=['text'])
@@ -84,40 +93,86 @@ def train_epoch(model, data_loader, optimizer, device):
     total_loss = 0
     total_tokens = 0
     
-    for batch in tqdm.tqdm(data_loader, desc = 'Training'):
+    for step, batch in enumerate(data_loader):
         batch = {k : v.to(device) for k, v in batch.items()}
-        outputs = model(**batch)
+        outputs = model(input_ids=batch["input_ids"],
+            attention_mask=batch["attention_mask"],
+            labels=batch["labels"])
         loss = outputs.loss
 
-        total_loss += loss.item()
+        batch_tokens = batch["input_ids"].numel()
+        total_loss += loss.item() * batch_tokens
+        total_tokens += batch_tokens
 
         
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
 
-        print("training loss : ",loss.item())
-        batch_tokens = batch['input_ids'].numel()
-        total_loss += batch_tokens * loss.item()
+        if(step%100==0):
+            print(f"step :{step} training loss : {loss.item()}")
+
+        del batch, outputs, loss
+        torch.cuda.empty_cache()  # Optionally clear GPU memory
+        gc.collect()
+        report_gpu_usage(f"{step}",step)
+
+
+def train_epoch_fp16(model, data_loader, optimizer, device):
+    model.train()
+    total_loss = 0
+    total_tokens = 0
+    scaler = GradScaler()
+
+
+    for step, batch in enumerate(data_loader):
+        batch = {k : v.to(device) for k, v in batch.items()}
+        # if(step%50==0):
+        #   report_gpu_usage(f"{step} start")
+        with autocast():
+          outputs = model(input_ids=batch["input_ids"],
+              attention_mask=batch["attention_mask"],
+              labels=batch["labels"])
+          loss = outputs.loss
+
+        batch_tokens = batch["input_ids"].numel()
+        total_loss += loss.item() * batch_tokens
         total_tokens += batch_tokens
 
-        del outputs
+
+        # Scale loss for FP16
+        scaler.scale(loss).backward()
+
+        # Step the optimizer using scaled gradients
+        scaler.step(optimizer)
+        scaler.update()
+        optimizer.zero_grad()
+
+        if(step%50==0):
+            print(f"step :{step} training loss : {loss.item()}")
+
+        del batch, outputs, loss
+        torch.cuda.empty_cache()  # Optionally clear GPU memory
+        gc.collect()
+        report_gpu_usage(f"{step}",step)
 
 @torch.no_grad()
 def evaluate(model, data_loader, device):
     model.eval()
     total_loss = 0
     total_tokens = 0
-    
-    for batch in tqdm.tqdm(data_loader, desc = 'Evaluating'):
+
+    for step,batch in enumerate(data_loader):
         batch = {k : v.to(device) for k, v in batch.items()}
-        with torch.no_grad():
-            outputs = model(**batch, output_attentions=True)
+        with  autocast():
+            outputs = model(input_ids=batch["input_ids"],
+                attention_mask=batch["attention_mask"],
+                labels=batch["labels"])
             loss = outputs.loss
 
-        batch_tokens = batch['input_ids'].numel()
-        print("eval loss : ",loss.item())
-        total_loss += batch_tokens * loss.item()
+        batch_tokens = batch["input_ids"].numel()
+        total_loss += loss.item() * batch_tokens
         total_tokens += batch_tokens
-        del outputs
-
+        del batch, outputs, loss
+        gc.collect()
+        torch.cuda.empty_cache()  # Optionally clear GPU memory

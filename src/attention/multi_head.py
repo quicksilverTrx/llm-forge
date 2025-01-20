@@ -4,7 +4,7 @@ from typing import Optional, Tuple
 import logging
 import math
 from .base_attention import ScaledDotProductAttention
-
+from .flash_attention import FlashAttentionConfig,FlashAttention
 logger = logging.getLogger(__name__)
 class MultiHeadAttention(nn.Module):
     """
@@ -21,7 +21,8 @@ class MultiHeadAttention(nn.Module):
         d_model: int,
         num_heads: int,
         dropout: float = 0.1,
-        bias: bool = True):
+        bias: bool = True,
+        use_flash: bool = False):
 
         super().__init__()
         if d_model % num_heads != 0:
@@ -34,7 +35,10 @@ class MultiHeadAttention(nn.Module):
 
         self.qkv_proj = nn.Linear(d_model, d_model*3, bias=bias)
         self.output_proj = nn.Linear(d_model, d_model, bias=bias)
-        self.attention = ScaledDotProductAttention(dropout=dropout, scale_factor=self.scaling)
+        if use_flash:
+            self.attention = FlashAttention(FlashAttentionConfig(dropout=dropout))
+        else:
+            self.attention = ScaledDotProductAttention(dropout=dropout, scale_factor=self.scaling)
 
         self._reset_parameters()
 

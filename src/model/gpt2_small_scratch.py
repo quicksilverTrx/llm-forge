@@ -90,4 +90,99 @@ class GPT2SmallSDPA(nn.Module):
     def num_parameters(self):
         return sum(p.numel() for p in self.parameters())
     
+    def get_position_ids(
+        self,
+        input_ids:torch.LongTensor,
+        device : torch.device
+    ) -> torch.LongTensor:
+        seq_length = input_ids.size(-1)
+        position_ids = torch.arange(
+            seq_length,
+            dtype=torch.long,
+            device=device
+        )
+        return position_ids.unsqueeze(0).expand_as(input_ids)
     
+    def forward(
+        self,
+        input_ids: torch.Longtensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None ,
+        labels: Optional[torch.LongTensor] = None,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        try:
+            device = input_ids.device
+            batch_size, seq_length = input_ids.size()
+
+            if position_ids is None:
+                position_ids = self.get_position_ids(input_ids, device)
+
+            #get token embeddings
+            input_embeddings = self.wte(input_ids)
+            #get positional embeddings
+            position_embeddings = self.wpe(position_ids)
+            #add both embeddings
+            hidden_states = input_embeddings + position_embeddings
+            hidden_states = self.drop(hidden_states)'
+            
+            #transformer blocks
+            for block in self.blocks:
+                hidden_states = block(hidden_states, attention_mask=attention_mask)
+
+            #Final Layer Norm
+            hidden_states = self.ln_f(hidden_states)
+
+            loss = None
+            if labels is not None:
+                #reshape logits and compute loss
+                logits = torch.matmul(hidden_states, self.wte.weight.t())
+                shift_logits = logits[..., :-1, :].contiguous()
+                shift_labels = labels[..., 1:].contiguous()
+                loss_fct = nn.CrossEntropyLoss()
+                loss = loss_fct(
+                    shift_logits.view(-1, shift_logits.size(-1)),
+                    shift_labels.view(-1))
+                
+            
+            logits = torch.matmul(hidden_states, self.wte.weight.t())
+            # Create HuggingFace-style output structure    
+            return type('ModelOutput', (), {
+                'loss': loss,
+                'logits': logits,
+                'hidden_states': hidden_states,
+                'last_hidden_state': hidden_states,
+                'attentions': None  # Can be extended to include attention outputs if needed
+            })
+        
+        except Exception as e:
+            logger.error(f"Error in GPT2 forward pass: {str(e)}")
+            raise
+
+def create_gpt2_small() -> GPT2SmallSDPA:
+    """Factory function to create a GPT-2 Small model"""
+    try:
+        config = GPT2Config()
+        model = GPT2SmallSDPA(config)
+        logger.info("Successfully created GPT-2 Small model")
+        return model
+    except Exception as e:
+        logger.error(f"Error creating GPT-2 Small model: {str(e)}")
+        raise       
+            
+
+if __name__ == "__main__":
+    try:
+        # Create model
+        model = create_gpt2_small()
+        
+        # Create dummy inputs
+        batch_size = 4
+        seq_length = 512
+        input_ids = torch.randint(0, 50257, (batch_size, seq_length))
+        
+        # Forward pass
+        outputs, _ = model(input_ids)
+        print(f"Output shape: {outputs.shape}")
+        
+    except Exception as e:
+        logger.error(f"Error in example usage: {str(e)}")

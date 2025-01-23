@@ -20,10 +20,12 @@ class ScaledDotProductAttention(nn.Module):
         self,
         dropout: float = 0.1,
         scale_factor: Optional[float] = None,
-        max_sequence_length: int = 2048
+        max_sequence_length: int = 2048,
+        causal = False
     ):
         super().__init__()
         self.dropout = nn.Dropout(p=dropout)
+        self.causal = causal
         self.scale_factor = scale_factor
         self.max_sequence_length = max_sequence_length
 

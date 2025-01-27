@@ -6,6 +6,7 @@ import logging
 import math
 from .base_attention import ScaledDotProductAttention
 from .flash_attention import FlashAttentionConfig,FlashAttention
+
 logger = logging.getLogger(__name__)
 class MultiHeadAttention(nn.Module):
     """
